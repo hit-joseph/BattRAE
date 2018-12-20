@@ -138,6 +138,7 @@ private:
 		lbfgsfloatval_t* theta,
 		lbfgsfloatval_t* grand);
 	lbfgsfloatval_t test_a_instance(string src, string tgt, lbfgsfloatval_t* x);
+	lbfgsfloatval_t test_a_instance(string src, string tgt, lbfgsfloatval_t* x, lbfgsfloatval_t* s, lbfgsfloatval_t* t);
 
 	// tuning the model with respect the dev file
 	lbfgsfloatval_t dev_tun(lbfgsfloatval_t* cX=NULL);
