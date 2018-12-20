@@ -385,15 +385,18 @@ lbfgsfloatval_t BattRAE::bilattional_semantic(
 
 		__LBFGSALLOC__(bsv->grand_src_sem_rep, sem_dim * 1);			// ns * 1
 		__LBFGSALLOC__(bsv->grand_tgt_sem_rep, sem_dim * 1);			// nt * 1
-		__LBFGSALLOC__(bsv->theta_src_sem_rep, sem_dim * 1);			// ns * 1
-		__LBFGSALLOC__(bsv->theta_tgt_sem_rep, sem_dim * 1);			// nt * 1
-
-		__LBFGSALLOC__(bsv->theta_src_inst_representation, src_dim * 1);	// n1 * 1
-		__LBFGSALLOC__(bsv->theta_tgt_inst_representation, tgt_dim * 1);	// n2 * 1
 
 		__LBFGSALLOC__(bsv->grand_v_score, 1);					// 1 * 1
 		__LBFGSALLOC__(bsv->grand_biattention_matrix, src_node_num * tgt_node_num);
 	}
+	// define the source and target semantic representation
+	__LBFGSALLOC__(bsv->theta_src_sem_rep, sem_dim * 1);			// ns * 1
+	__LBFGSALLOC__(bsv->theta_tgt_sem_rep, sem_dim * 1);			// nt * 1
+
+	// define the source and target weighted-rae representation
+	__LBFGSALLOC__(bsv->theta_src_inst_representation, src_dim * 1);	// n1 * 1
+	__LBFGSALLOC__(bsv->theta_tgt_inst_representation, tgt_dim * 1);	// n2 * 1
+
 	__LBFGSALLOC__(bsv->biattention_matrix, src_node_num * tgt_node_num);
 
 	MatrixLBFGS src_rae_mat(src_node_num, src_dim);
@@ -463,13 +466,12 @@ lbfgsfloatval_t BattRAE::bilattional_semantic(
 	// We also need the `src_rae_mat` and `tgt_rae_mat` for prop into the attention scorer layer
  	VectorLBFGS src_inst_representation = src_rae_mat.transpose() * src_att_score;
 	VectorLBFGS tgt_inst_representation = tgt_rae_mat.transpose() * tgt_att_score;
-	// 5.1 preserving representation
-	if(bsv->is_tree){
-		Map<VectorLBFGS> theta_src_inst_representation(bsv->theta_src_inst_representation, src_dim * 1);
-		theta_src_inst_representation = src_inst_representation;
-		Map<VectorLBFGS> theta_tgt_inst_representation(bsv->theta_tgt_inst_representation, tgt_dim * 1);
-		theta_tgt_inst_representation = tgt_inst_representation;
-	}
+	// 5.1 preserving representation	
+	Map<VectorLBFGS> theta_src_inst_representation(bsv->theta_src_inst_representation, src_dim * 1);
+	theta_src_inst_representation = src_inst_representation;
+	Map<VectorLBFGS> theta_tgt_inst_representation(bsv->theta_tgt_inst_representation, tgt_dim * 1);
+	theta_tgt_inst_representation = tgt_inst_representation;
+
 
 	// 6. Transform the representation into the semantic space
 	// 6.1 w*x + b
@@ -526,12 +528,12 @@ lbfgsfloatval_t BattRAE::bilattional_semantic(
 		theta_src_rae_mat = src_rae_mat;
 		Map<MatrixLBFGS> theta_tgt_rae_mat(bsv->theta_tgt_rae_mat, tgt_node_num, tgt_dim);
 		theta_tgt_rae_mat = tgt_rae_mat;
-
-		Map<VectorLBFGS> theta_src_sem_rep(bsv->theta_src_sem_rep, sem_dim);
-		theta_src_sem_rep = src_sem_rep;
-		Map<VectorLBFGS> theta_tgt_sem_rep(bsv->theta_tgt_sem_rep, sem_dim);
-		theta_tgt_sem_rep = tgt_sem_rep;
 	}
+
+	Map<VectorLBFGS> theta_src_sem_rep(bsv->theta_src_sem_rep, sem_dim);
+	theta_src_sem_rep = src_sem_rep;
+	Map<VectorLBFGS> theta_tgt_sem_rep(bsv->theta_tgt_sem_rep, sem_dim);
+	theta_tgt_sem_rep = tgt_sem_rep;
 
 	return score;
 }
@@ -973,6 +975,45 @@ lbfgsfloatval_t BattRAE::test_a_instance(string src, string tgt, lbfgsfloatval_t
 	return score;
 }
 
+lbfgsfloatval_t BattRAE::test_a_instance(string src, string tgt, lbfgsfloatval_t* x, lbfgsfloatval_t* s, lbfgsfloatval_t* t){
+	lbfgsfloatval_t* gTmp = NULL;
+	__LBFGSALLOC__(gTmp, get_x_size());
+
+	BiattSemValue* bsv = new BiattSemValue(false);
+	lbfgsfloatval_t score = bilattional_semantic(
+		get_src_dim(),
+		get_tgt_dim(),
+		get_att_dim(),
+		get_sem_dim(),
+
+		vocab->get_source_size(),
+		get_src_size(),
+		get_vocab_size(),
+		get_src_rae_size(),
+		get_tgt_rae_size(),
+
+		x,
+		gTmp,
+		0.0,
+
+		src,
+		tgt,
+
+		bsv
+	);
+
+
+	Map<VectorLBFGS>(s, get_sem_dim()) = Map<VectorLBFGS>(bsv->theta_src_sem_rep, get_sem_dim());
+	Map<VectorLBFGS>(t, get_sem_dim()) = Map<VectorLBFGS>(bsv->theta_tgt_sem_rep, get_sem_dim());
+
+
+	__LBFGSFREE__(gTmp);
+	if(bsv != NULL) delete bsv;
+
+
+	return score;
+}
+
 void BattRAE::test(){
 	string tst_file = para->get_para("[test_file]");
 	ifstream in(tst_file.c_str());
@@ -991,6 +1032,11 @@ void BattRAE::test(){
 
 	cout << "#Starting procesing test file" << endl;
 	long count = 0;
+
+	lbfgsfloatval_t* s = NULL, *t = NULL;
+	__LBFGSALLOC__(s, get_sem_dim());
+	__LBFGSALLOC__(t, get_sem_dim())
+
 	while(getline(in, line)){
 		if((line = strip_str(line)) == "") continue;
 
@@ -1017,9 +1063,24 @@ void BattRAE::test(){
 		}
 		cvt_tgt = strip_str(cvt_tgt);
 
-		lbfgsfloatval_t score = test_a_instance(cvt_src, cvt_tgt, x);
+		lbfgsfloatval_t score = test_a_instance(cvt_src, cvt_tgt, x, s, t);
 
-		os << line << " " << score << endl;
+		os << line << " ||| " << score;
+		os << " ||| ";
+		for(int i = 0; i < get_sem_dim(); ++ i){
+			os << s[i];
+			if (i != get_sem_dim() - 1){
+				os << " ";
+			}
+		}
+		os << " ||| ";
+		for(int i = 0; i < get_sem_dim(); ++ i){
+			os << t[i];
+			if (i != get_sem_dim() - 1){
+				os << " ";
+			}
+		}
+		os << endl;
 
 		++ count;
 		if (count % 10000 == 0){
@@ -1028,6 +1089,9 @@ void BattRAE::test(){
 	}
 	in.close();
 	os.close();
+
+	if (s != NULL) delete s;
+	if (t != NULL) delete t;
 }
 
 lbfgsfloatval_t BattRAE::dev_tun(lbfgsfloatval_t* cX){
